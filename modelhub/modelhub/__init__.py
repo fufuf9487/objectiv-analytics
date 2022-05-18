@@ -42,7 +42,6 @@ if os.environ.get('OBJECTIV_VERSION_CHECK_DISABLE', 'false') == 'false':
 
             data = '\n'.join(packages)
             try:
-                # set timeout to 0.5 seconds
                 timeout = aiohttp.ClientTimeout(total=5)
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.post(CHECK_URL, data=data) as resp:

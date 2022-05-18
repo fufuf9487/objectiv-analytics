@@ -18,7 +18,7 @@ from sqlalchemy.engine import Engine, Dialect
 from bach.expression import Expression, MultiLevelExpression
 from bach.series.series import ToPandasInfo
 from bach.sql_model import BachSqlModel
-from bach.types import AllSupportedLiteralTypes, get_series_type_from_dtype
+from bach.types import AllSupportedLiteralTypes, get_series_type_from_dtype, StructuredDtype
 from sql_models.constants import DBDialect, NotSet, not_set
 from sql_models.util import DatabaseNotSupportedException, is_postgres, is_bigquery
 
@@ -58,6 +58,7 @@ class SeriesAbstractMultiLevel(Series, ABC):
         group_by: Optional[Union['GroupBy', NotSet]] = not_set,
         sorted_ascending: Optional[Union[bool, NotSet]] = not_set,
         index_sorting: Optional[List[bool]] = None,
+        instance_dtype: Optional[StructuredDtype] = None,
         **kwargs,
     ) -> T:
         """
@@ -76,7 +77,8 @@ class SeriesAbstractMultiLevel(Series, ABC):
             group_by=group_by,
             sorted_ascending=sorted_ascending,
             index_sorting=index_sorting,
-            **extra_params,
+            instance_dtype=instance_dtype,
+            **extra_params
         ))
 
     @classmethod
@@ -88,9 +90,10 @@ class SeriesAbstractMultiLevel(Series, ABC):
         name: str,
         expression: Expression,
         group_by: Optional['GroupBy'],
-        sorted_ascending: Optional[bool] = None,
-        index_sorting: List[bool] = None,
-        **kwargs,
+        sorted_ascending: Optional[bool],
+        index_sorting: List[bool],
+        instance_dtype: StructuredDtype,
+        **kwargs
     ):
         """
         INTERNAL: Create an instance of this class.
@@ -142,6 +145,7 @@ class SeriesAbstractMultiLevel(Series, ABC):
             sub_levels[level_name] = get_series_type_from_dtype(dtype).get_class_instance(
                 name=f'_{name}_{level_name}',
                 expression=expr,
+                instance_dtype=dtype,
                 **base_params
             )
 
@@ -154,7 +158,8 @@ class SeriesAbstractMultiLevel(Series, ABC):
             group_by=group_by,
             sorted_ascending=sorted_ascending,
             index_sorting=[] if index_sorting is None else index_sorting,
-            **sub_levels,
+            instance_dtype=instance_dtype,
+            **sub_levels
         )
 
     @property
@@ -198,6 +203,7 @@ class SeriesAbstractMultiLevel(Series, ABC):
         base: DataFrameOrSeries,
         value: Any,
         name: str,
+        dtype: Optional[StructuredDtype] = None
     ) -> 'Series':
         """
         Create an instance of this class, that represents a column with the given value.
@@ -207,6 +213,8 @@ class SeriesAbstractMultiLevel(Series, ABC):
         :param value:   Mapping between each level and constant. All levels must be present.
         :param name:    The name that it will be known by (only for representation)
         """
+        if dtype is None:
+            dtype = cls.dtype
         if (
             not isinstance(value, dict)
             or not all(level in value for level in cls.get_supported_level_dtypes().keys())
@@ -228,7 +236,8 @@ class SeriesAbstractMultiLevel(Series, ABC):
             group_by=None,
             sorted_ascending=None,
             index_sorting=[],
-            **levels,
+            instance_dtype=dtype,
+            **levels
         )
 
         return result
@@ -242,7 +251,7 @@ class SeriesAbstractMultiLevel(Series, ABC):
         raise NotImplementedError()
 
     @classmethod
-    def supported_value_to_literal(cls, dialect: Dialect, value: Any) -> Expression:
+    def supported_value_to_literal(cls, dialect: Dialect, value: Any, dtype: StructuredDtype) -> Expression:
         raise NotImplementedError()
 
     def astype(self, dtype: Union[str, Type]) -> 'Series':
@@ -333,6 +342,7 @@ class SeriesAbstractMultiLevel(Series, ABC):
                 level_name: appended_df[f'_{self.name}_{level_name}'] for level_name in self.levels.keys()
             },
             name=self.name,
+            dtype=self.dtype
         )
 
     def flatten(self) -> 'DataFrame':

@@ -9,6 +9,7 @@ from sqlalchemy.engine import Dialect
 from bach.series import Series
 from bach.expression import Expression
 from bach.series.series import WrappedPartition
+from bach.types import StructuredDtype
 from sql_models.constants import DBDialect
 from sql_models.util import is_postgres
 
@@ -49,7 +50,12 @@ class SeriesBoolean(Series, ABC):
         return literal
 
     @classmethod
-    def supported_value_to_literal(cls, dialect: Dialect, value: bool) -> Expression:
+    def supported_value_to_literal(
+        cls,
+        dialect: Dialect,
+        value: bool,
+        dtype: StructuredDtype
+    ) -> Expression:
         return Expression.raw(str(value))
 
     @classmethod

@@ -7,17 +7,32 @@ SPHINXOPTS    ?=
 SPHINXBUILD   ?= sphinx-build
 SOURCEDIR     = source
 BUILDDIR      = build
+DOCUSAURUSDIR = docusaurus
+TARGETDIR			= ../../../objectiv.io/docs/docs/modeling/
 
 # Put it first so that "make" without argument is like "make help".
 help:
 	@$(SPHINXBUILD) -M help "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
 
 clean:
-	rm -rf "$(SOURCEDIR)/DataFrame/"
-	rm -rf "$(SOURCEDIR)/modelhub_api_reference/"
-	rm -rf "$(SOURCEDIR)/Series/"
+	rm -rf $(SOURCEDIR)/bach/api-reference/DataFrame/bach.DataFrame.* # not the index
+	rm -rf $(SOURCEDIR)/bach/api-reference/Series/bach.Series.* # not the index
+	rm -rf $(SOURCEDIR)/bach/api-reference/Series/AbstractDateTime/bach.SeriesAbstractDateTime* # not the index
+	rm -rf $(SOURCEDIR)/bach/api-reference/Series/AbstractNumeric/bach.SeriesAbstractNumeric* # not the index
+	rm -rf $(SOURCEDIR)/bach/api-reference/Series/Boolean/bach.SeriesBoolean* # not the index
+	rm -rf $(SOURCEDIR)/bach/api-reference/Series/Json/bach.SeriesJson* # not the index
+	rm -rf $(SOURCEDIR)/bach/api-reference/Series/Jsonb/bach.SeriesJsonb* # not the index
+	rm -rf $(SOURCEDIR)/bach/api-reference/Series/String/bach.SeriesString* # not the index
+	rm -rf $(SOURCEDIR)/open-model-hub/models/**/modelhub.* # not the index
+	rm -rf $(SOURCEDIR)/open-model-hub/api-reference/**/modelhub.* # not the index
 
 	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) 0$(O)
+
+clean-target:
+	rm -rf $(TARGETDIR)/**/
+
+copy-target:
+	cp -a $(BUILDDIR)/$(DOCUSAURUSDIR)/* $(TARGETDIR)
 
 .PHONY: help Makefile
 

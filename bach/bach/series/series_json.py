@@ -10,7 +10,7 @@ from bach.series import Series
 from bach.expression import Expression
 from bach.series.series import WrappedPartition
 from bach.sql_model import BachSqlModel
-from bach.types import DtypeOrAlias
+from bach.types import DtypeOrAlias, StructuredDtype
 from sql_models.constants import DBDialect
 from sql_models.util import quote_string, is_postgres, DatabaseNotSupportedException
 
@@ -311,6 +311,10 @@ class SeriesJsonb(Series):
         """
         return self.Json(self)
 
+    @property
+    def elements(self):
+        return self.Json(self)
+
     @classmethod
     def supported_literal_to_expression(cls, dialect: Dialect, literal: Expression) -> Expression:
         if not is_postgres(dialect):
@@ -318,7 +322,12 @@ class SeriesJsonb(Series):
         return Expression.construct(f'cast({{}} as {cls.get_db_dtype(dialect)})', literal)
 
     @classmethod
-    def supported_value_to_literal(cls, dialect: Dialect, value: Union[dict, list]) -> Expression:
+    def supported_value_to_literal(
+            cls,
+            dialect: Dialect,
+            value: Union[dict, list],
+            dtype: StructuredDtype
+    ) -> Expression:
         json_value = json.dumps(value)
         return Expression.string_value(json_value)
 
@@ -376,7 +385,9 @@ class SeriesJson(SeriesJsonb):
                  expression: Expression,
                  group_by: 'GroupBy',
                  sorted_ascending: Optional[bool],
-                 index_sorting: List[bool]):
+                 index_sorting: List[bool],
+                 instance_dtype: StructuredDtype,
+                 **kwargs):
 
         super().__init__(engine=engine,
                          base_node=base_node,
@@ -385,4 +396,6 @@ class SeriesJson(SeriesJsonb):
                          expression=Expression.construct(f'cast({{}} as jsonb)', expression),
                          group_by=group_by,
                          sorted_ascending=sorted_ascending,
-                         index_sorting=index_sorting)
+                         index_sorting=index_sorting,
+                         instance_dtype=instance_dtype,
+                         **kwargs)

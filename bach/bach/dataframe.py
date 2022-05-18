@@ -15,7 +15,7 @@ from sqlalchemy.engine import Engine
 from bach.expression import Expression, SingleValueExpression, VariableToken, AggregateFunctionExpression
 from bach.from_database import get_dtypes_from_table, get_dtypes_from_model
 from bach.sql_model import BachSqlModel, CurrentNodeSqlModel, get_variable_values_sql
-from bach.types import get_series_type_from_dtype, AllSupportedLiteralTypes
+from bach.types import get_series_type_from_dtype, AllSupportedLiteralTypes, StructuredDtype
 from bach.utils import escape_parameter_characters
 from sql_models.constants import NotSet, not_set
 from sql_models.graph_operations import update_placeholders_in_graph, get_all_placeholders
@@ -532,7 +532,7 @@ class DataFrame:
             engine: Engine,
             table_name: str,
             index: List[str],
-            all_dtypes: Optional[Dict[str, str]] = None,
+            all_dtypes: Optional[Mapping[str, StructuredDtype]] = None,
             *,
             bq_dataset: Optional[str] = None,
             bq_project_id: Optional[str] = None
@@ -601,7 +601,7 @@ class DataFrame:
             engine: Engine,
             model: SqlModel,
             index: List[str],
-            all_dtypes: Optional[Dict[str, str]] = None
+            all_dtypes: Optional[Mapping[str, StructuredDtype]] = None
     ) -> 'DataFrame':
         """
         Instantiate a new DataFrame based on the result of the query defined in `model`.
@@ -639,7 +639,7 @@ class DataFrame:
             engine,
             model: SqlModel,
             index: List[str],
-            all_dtypes: Dict[str, str]
+            all_dtypes: Mapping[str, StructuredDtype]
     ) -> 'DataFrame':
         """
         INTERNAL: Instantiate a new DataFrame based on the result of the query defined in `model`.
@@ -753,8 +753,8 @@ class DataFrame:
         cls,
         engine,
         base_node: BachSqlModel,
-        index_dtypes: Dict[str, str],
-        dtypes: Dict[str, str],
+        index_dtypes: Mapping[str, StructuredDtype],
+        dtypes: Mapping[str, StructuredDtype],
         group_by: Optional['GroupBy'],
         order_by: List[SortColumn],
         savepoints: 'Savepoints',
@@ -774,23 +774,25 @@ class DataFrame:
             'index_sorting': [],
         }
         index: Dict[str, Series] = {
-            key: get_series_type_from_dtype(value).get_class_instance(
+            name: get_series_type_from_dtype(dtype).get_class_instance(
                 index={},  # Empty index for index series
-                name=key,
-                expression=Expression.column_reference(key),
+                name=name,
+                expression=Expression.column_reference(name),
+                instance_dtype=dtype,
                 **base_params
             )
-            for key, value in index_dtypes.items()
+            for name, dtype in index_dtypes.items()
         }
 
         series: Dict[str, Series] = {
-            key: get_series_type_from_dtype(value).get_class_instance(
+            name: get_series_type_from_dtype(dtype).get_class_instance(
                 index=index,
-                name=key,
-                expression=Expression.column_reference(key),
-                **base_params,
+                name=name,
+                expression=Expression.column_reference(name),
+                instance_dtype=dtype,
+                **base_params
             )
-            for key, value in dtypes.items()
+            for name, dtype in dtypes.items()
         }
 
         return cls(
@@ -813,8 +815,8 @@ class DataFrame:
         group_by: Optional[Union['GroupBy', NotSet]] = not_set,
         order_by: Optional[List[SortColumn]] = None,
         variables: Optional[Dict[DtypeNamePair, Hashable]] = None,
-        index_dtypes: Optional[Mapping[str, str]] = None,
-        series_dtypes: Optional[Mapping[str, str]] = None,
+        index_dtypes: Optional[Mapping[str, StructuredDtype]] = None,
+        series_dtypes: Optional[Mapping[str, StructuredDtype]] = None,
         single_value: bool = False,
         savepoints: Optional['Savepoints'] = None,
         **kwargs
@@ -852,48 +854,56 @@ class DataFrame:
 
         if index_dtypes:
             new_index: Dict[str, Series] = {}
-            for key, value in index_dtypes.items():
-                index_type = get_series_type_from_dtype(value)
-                new_index[key] = index_type(
-                    engine=args['engine'], base_node=args['base_node'],
+            for name, dtype in index_dtypes.items():
+                index_type = get_series_type_from_dtype(dtype)
+                new_index[name] = index_type(
+                    engine=args['engine'],
+                    base_node=args['base_node'],
                     index={},  # Empty index for index series
-                    name=key, expression=expression_class.column_reference(key),
+                    name=name,
+                    expression=expression_class.column_reference(name),
                     group_by=args['group_by'],
                     sorted_ascending=None,
-                    index_sorting=[]
+                    index_sorting=[],
+                    instance_dtype=dtype
                 )
             args['index'] = new_index
 
         if series_dtypes:
             from bach.series import SeriesAbstractMultiLevel
             new_series: Dict[str, Series] = {}
-            for key, value in series_dtypes.items():
-                series_type = get_series_type_from_dtype(value)
-                extra_params = copy(args)
+            for name, dtype in series_dtypes.items():
+                series_type = get_series_type_from_dtype(dtype)
+                extra_params = {}
 
                 if issubclass(series_type, SeriesAbstractMultiLevel):
-                    if key not in self._data:
+                    if name not in self._data:
                         raise Exception(
                             f'cannot instantiate {series_type.__name__} class without level information.'
                         )
-                    multi_level_series = cast(SeriesAbstractMultiLevel, self.all_series[key])
+                    multi_level_series = cast(SeriesAbstractMultiLevel, self.all_series[name])
                     extra_params.update(
                         {
                             lvl_name: lvl.copy_override(
-                                expression=expression_class.column_reference(f'_{key}_{lvl_name}')
+                                expression=expression_class.column_reference(f'_{name}_{lvl_name}')
                             )
                             for lvl_name, lvl in multi_level_series.levels.items()
                         }
                     )
 
-                new_series[key] = series_type.get_class_instance(
-                    name=key,
-                    expression=expression_class.column_reference(key),
+                new_series[name] = series_type.get_class_instance(
+                    engine=args['engine'],
+                    base_node=args['base_node'],
+                    index=args['index'],  # Empty index for index series
+                    name=name,
+                    expression=expression_class.column_reference(name),
+                    group_by=args['group_by'],
                     sorted_ascending=None,
                     index_sorting=[],
+                    instance_dtype=dtype,
                     **extra_params
                 )
-                args['series'] = new_series
+            args['series'] = new_series
 
         return self.__class__(**args, **kwargs)
 
@@ -989,8 +999,8 @@ class DataFrame:
             Calling materialize() resets the order of the dataframe. Call :py:meth:`sort_values()` again on
             the result if order is important.
         """
-        index_dtypes = {k: v.dtype for k, v in self._index.items()}
-        series_dtypes = {k: v.dtype for k, v in self._data.items()}
+        index_dtypes = {k: v.instance_dtype for k, v in self.index.items()}
+        series_dtypes = {k: v.instance_dtype for k, v in self.data.items()}
         node = self.get_current_node(name=node_name, limit=limit, distinct=distinct)
 
         df = self.get_instance(

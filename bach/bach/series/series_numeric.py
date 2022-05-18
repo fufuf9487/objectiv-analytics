@@ -10,6 +10,7 @@ from sqlalchemy.engine import Dialect
 from bach.series import Series
 from bach.expression import Expression, AggregateFunctionExpression
 from bach.series.series import WrappedPartition
+from bach.types import StructuredDtype
 from sql_models.constants import DBDialect
 from sql_models.util import is_postgres, is_bigquery, DatabaseNotSupportedException
 
@@ -31,8 +32,11 @@ class SeriesAbstractNumeric(Series, ABC):
 
     And the aggregations/statistical functions:
 
-    - :py:meth:`sum`, :py:meth:`mean`
-    - :py:meth:`sem`, :py:meth:`std`, :py:meth:`var`
+    - :py:meth:`sum`
+    - :py:meth:`mean`
+    - :py:meth:`sem`
+    - :py:meth:`std`
+    - :py:meth:`var`
 
     Integer types also support lshift (<<) and rshift(>>)
     """
@@ -228,7 +232,12 @@ class SeriesInt64(SeriesAbstractNumeric):
         raise DatabaseNotSupportedException(dialect)
 
     @classmethod
-    def supported_value_to_literal(cls, dialect: Dialect, value: int) -> Expression:
+    def supported_value_to_literal(
+            cls,
+            dialect: Dialect,
+            value: int,
+            dtype: StructuredDtype
+    ) -> Expression:
         return Expression.raw(str(value))
 
     @classmethod
@@ -307,7 +316,12 @@ class SeriesFloat64(SeriesAbstractNumeric):
         return Expression.construct(f'cast({{}} as {cls.get_db_dtype(dialect)})', literal)
 
     @classmethod
-    def supported_value_to_literal(cls, dialect: Dialect, value: Union[float, numpy.float64]) -> Expression:
+    def supported_value_to_literal(
+        cls,
+        dialect: Dialect,
+        value: Union[float, numpy.float64],
+        dtype: StructuredDtype
+    ) -> Expression:
         return Expression.string_value(str(value))
 
     @classmethod

@@ -11,3 +11,5 @@ from bach.series.series_string import SeriesString
 from bach.series.series_datetime import \
     SeriesAbstractDateTime, SeriesDate, SeriesTime, SeriesTimestamp, SeriesTimedelta
 from bach.series.series_multi_level import SeriesAbstractMultiLevel, SeriesNumericInterval
+from bach.series.series_list import SeriesList
+from bach.series.series_dict import SeriesDict

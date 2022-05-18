@@ -2,7 +2,7 @@
 Copyright 2021 Objectiv B.V.
 """
 from abc import ABC, abstractmethod
-from copy import copy
+from copy import copy, deepcopy
 from typing import Optional, Dict, Tuple, Union, Type, Any, List, cast, TYPE_CHECKING, Callable, Mapping, \
     TypeVar, Sequence, NamedTuple
 from uuid import UUID
@@ -19,7 +19,8 @@ from bach.expression import Expression, NonAtomicExpression, ConstValueExpressio
 
 from bach.sql_model import BachSqlModel
 
-from bach.types import DtypeOrAlias, AllSupportedLiteralTypes, value_to_series_type
+from bach.types import StructuredDtype, Dtype, validate_instance_dtype, DtypeOrAlias,\
+    AllSupportedLiteralTypes, value_to_series_type
 from bach.utils import is_valid_column_name
 from sql_models.constants import NotSet, not_set, DBDialect
 from sql_models.util import is_bigquery, DatabaseNotSupportedException
@@ -89,14 +90,19 @@ class Series(ABC):
     Subclasses can override this value to indicate what strings they consider aliases for their dtype.
     """
 
-    supported_db_dtype: Mapping[DBDialect, str] = {}
+    supported_db_dtype: Mapping[DBDialect, Optional[str]] = {}
     """
     INTERNAL: Per supported database, the database's data type that can be expressed using this Series type.
     Example: {DBDialect.POSTGRES: 'double precision'} for a float in Postgres
 
-    Subclasses should override this value if they intend to be the default class to handle such types.
-    When creating a DataFrame from existing data in a database, this field will be used to
-    determine what Series to instantiate for a column.
+    Subclasses must override this with a mapping containing all databases that they support.
+    If subclasses intend to be the default class to handle a certain database type, then they must express
+    that in the returned mapping.
+
+    Main use of this field is two fold:
+    1. Determining what databases are supported by a Series
+    2. When creating a DataFrame from existing data in a database, this field will be used to determine what
+        Series to instantiate for a column.
     """
 
     supported_value_types: Tuple[Type, ...] = tuple()
@@ -118,8 +124,9 @@ class Series(ABC):
         group_by: Optional['GroupBy'],
         sorted_ascending: Optional[bool],
         index_sorting: List[bool],
+        instance_dtype: StructuredDtype,
         **kwargs,
-    ) -> None:
+    ):
         """
         Initialize a new Series object.
         If a Series is associated with a DataFrame. The engine, base_node and index
@@ -149,12 +156,14 @@ class Series(ABC):
         :param sorted_ascending: None for no sorting, True for sorted ascending, False for sorted descending
         :param index_sorting: list of bools indicating whether to sort ascending/descending on the different
             columns of the index. Empty list for no sorting on index.
+        :param instance_dtype: dtype of this specific instance. For basic scalar types this should be the
+            same value as self.dtype. For structured types (e.g. SeriesDict) this should indicate what the
+            structure of the data is.
         """
         # Series is an abstract class, besides the abstractmethods subclasses must/may override some
         #   properties:
-        #   * subclasses MUST override one class property: 'dtype',
-        #   * subclasses MAY override the class properties 'dtype_aliases', 'supported_db_dtype',
-        #       'supported_value_types'
+        #   * non-abstract subclasses MUST override some class properties: 'dtype', and 'supported_db_dtype'
+        #   * subclasses MAY also override class properties: 'dtype_aliases', and 'supported_value_types'
         # Unfortunately defining these properties as an "abstract-classmethod-property" makes it hard
         # to understand for mypy, sphinx, and python. Therefore, we check here that we are instantiating a
         # proper subclass, instead of just relying on @abstractmethod.
@@ -164,9 +173,13 @@ class Series(ABC):
         if self.__class__ == Series:
             raise TypeError("Cannot instantiate Series directly. Instantiate a subclass.")
         if self.dtype == '':
-            raise NotImplementedError("Series subclasses must override `dtype` class property")
+            raise NotImplementedError("Non-abstract Series subclasses must override `dtype` class property")
+        if self.supported_db_dtype == {}:
+            raise NotImplementedError(
+                "Non-abstract Series subclasses must override `supported_db_dtype` class property")
         # End of Abstract-class check
 
+        self.assert_engine_dialect_supported(engine)
         if index == {} and group_by and group_by.index != {}:
             # not a completely watertight check, because a group_by on {} is valid.
             raise ValueError(f'Index Series should be free of pending aggregation.')
@@ -181,6 +194,7 @@ class Series(ABC):
                              f'length of index ({len(index)}).')
         if not is_valid_column_name(dialect=engine.dialect, name=name):
             raise ValueError(f'Column name "{name}" is not valid for SQL dialect {engine.dialect}')
+        validate_instance_dtype(static_dtype=self.dtype, instance_dtype=instance_dtype)
 
         self._engine = engine
         self._base_node = base_node
@@ -190,6 +204,7 @@ class Series(ABC):
         self._group_by = group_by
         self._sorted_ascending = sorted_ascending
         self._index_sorting = index_sorting
+        self._instance_dtype = instance_dtype
 
     @classmethod
     @abstractmethod
@@ -207,7 +222,12 @@ class Series(ABC):
 
     @classmethod
     @abstractmethod
-    def supported_value_to_literal(cls, dialect: Dialect, value: Any) -> Expression:
+    def supported_value_to_literal(
+            cls,
+            dialect: Dialect,
+            value: Any,
+            dtype: StructuredDtype
+    ) -> Expression:
         """
         INTERNAL: Gives an expression for the sql-literal of the given value.
 
@@ -225,6 +245,8 @@ class Series(ABC):
 
         :param dialect: Database dialect
         :param value: All values of types listed by self.supported_value_types should be supported.
+        :param dtype: instance-dtype. For scalar values this should simply be cls.dtype, for structural types
+            this should be a dtype that describes the structure of value.
         :return: Expression of a sql-literal for the value
         """
         raise NotImplementedError()
@@ -298,6 +320,15 @@ class Series(ABC):
         """ INTERNAL: Get the expression"""
         return self._expression
 
+    @property
+    def instance_dtype(self) -> StructuredDtype:
+        """
+        Get the instance_dtype. For basic scalar types this should be the same value as self.dtype. For
+        structured types (e.g. SeriesDict) this should indicate what the structure of the data is. See the
+        class docstring of structured types for more information on the structure.
+        """
+        return deepcopy(self._instance_dtype)
+
     @classmethod
     def get_class_instance(
         cls,
@@ -309,7 +340,8 @@ class Series(ABC):
         group_by: Optional['GroupBy'],
         sorted_ascending: Optional[bool],
         index_sorting: List[bool],
-        **kwargs,
+        instance_dtype: StructuredDtype,
+        **kwargs
     ):
         """ INTERNAL: Create an instance of this class. """
         return cls(
@@ -321,59 +353,100 @@ class Series(ABC):
             group_by=group_by,
             sorted_ascending=sorted_ascending,
             index_sorting=[] if index_sorting is None else index_sorting,
-            **kwargs,
+            instance_dtype=instance_dtype,
+            **kwargs
         )
 
     @classmethod
-    def get_db_dtype(cls, dialect: Dialect) -> str:
+    def get_db_dtype(cls, dialect: Dialect) -> Optional[str]:
         """
         Give the static db_dtype of this Series, for the given database dialect.
-        :raises DatabaseNotSupportedException:  If the db_dtype is not defined for the given dialect.
+        :raises DatabaseNotSupportedException: If the Series subclass doesn't support the database dialect.
+        :return: database type as string, or None if this Series has no database type for which it is the
+            standard Series for that database, or if that type is a structural type whose exact type depends
+            on the data of the subtypes (e.g. SeriesList will return None on BigQuery, as it can handle all
+                ARRAY<*> subtypes)
         """
         db_dialect = DBDialect.from_dialect(dialect)
         if db_dialect not in cls.supported_db_dtype:
-            raise DatabaseNotSupportedException(
-                dialect,
-                message_override=f'Cannot get db type of {cls.__name__} for {dialect.name}')
+            message_override = f'{cls.__name__} is not supported for database dialect {dialect.name}'
+            raise DatabaseNotSupportedException(dialect, message_override=message_override)
         return cls.supported_db_dtype[db_dialect]
 
     @classmethod
-    def value_to_expression(cls, dialect: Dialect, value: Optional[Any]) -> Expression:
+    def value_to_literal(
+            cls,
+            dialect: Dialect,
+            value: Optional[Any],
+            dtype: StructuredDtype
+    ) -> Expression:
         """
-        INTERNAL: Give the expression for the given value.
+        INTERNAL: Give the literal for the given value.
 
-        Wrapper around :meth:`Series.supported_value_to_literal()` and
-        :meth:`Series.supported_literal_to_expression()` that handles two generic cases:
-            1. If value is None a simple 'NULL' expression is returned.
-            2. If value is not in supported_value_types raises an error.
+        This is similar to :meth:`Series.value_to_expression()`, but does not call
+        :meth:`Series.supported_literal_to_expression()` on the result. In most cases you'd want to use
+        :meth:`Series.value_to_expression()`.
 
-        :param dialect: Database dialect
-        :param value: value to convert to an expression
-        :raises TypeError: if value is not an instance of cls.supported_value_types, and not None
+        This function handles three generic cases:
+        1. If value is None a simple 'NULL' expression is returned.
+        2. If value is not in supported_value_types raises an error.
+        3. if dtype is a simple dtype and does not match cls.dtype, raises an error.
         """
-        # We should wrap this in a ConstValueExpression or something
         if value is None:
             return Expression.raw('NULL')
         if not isinstance(value, cls.supported_value_types):
             raise TypeError(f'value should be one of {cls.supported_value_types}'
                             f', actual type: {type(value)}')
-        literal = cls.supported_value_to_literal(dialect=dialect, value=value)
-        return cls.supported_literal_to_expression(dialect=dialect, literal=literal)
+        if isinstance(dtype, Dtype) and dtype != cls.dtype:
+            raise ValueError(f'Dtype "{dtype}" does not match class dtype: {cls.dtype}')
+
+        return cls.supported_value_to_literal(dialect=dialect, value=value, dtype=dtype)
+
+    @classmethod
+    def value_to_expression(
+            cls,
+            dialect: Dialect,
+            value: Optional[Any],
+            dtype: StructuredDtype
+    ) -> ConstValueExpression:
+        """
+        INTERNAL: Give the expression for the given value.
+
+        Wrapper around the methods :meth:`Series.supported_value_to_literal()` and
+        :meth:`Series.supported_literal_to_expression()`, which are implemented in sub-classes.
+        This function handles some generic cases that are not handled in the subclasses. Additionally the
+        result is wrapped in a ConstValueExpression.
+
+        See :meth:`Series.value_to_literal()` on information on what cases are handled in the wrappers.
+
+        :param dialect: Database dialect
+        :param value: value to convert to an expression
+        :param dtype: instance-dtype. For scalar values this should simply be cls.dtype, for structural types
+            this should be a dtype that describes the structure of value.
+        :raises TypeError: if value is not an instance of cls.supported_value_types, and not None
+        """
+        literal = cls.value_to_literal(dialect=dialect, value=value, dtype=dtype)
+        const_expression = cls.supported_literal_to_expression(dialect=dialect, literal=literal)
+        return ConstValueExpression(const_expression)
 
     @classmethod
     def from_value(cls,
                    base: DataFrameOrSeries,
                    value: Any,
-                   name: str) -> 'Series':
+                   name: str,
+                   dtype: Optional[StructuredDtype] = None) -> 'Series':
         """
         Create an instance of this class, that represents a column with the given value.
-        The returned Series will be similar to the Series given as base. In case a DataFrame is given,
-        it can be used immediately with that frame.
+        The given base Series/DataFrame will be used to set the engine, base_node, and index.
+
         :param base:    The DataFrame or Series that the internal parameters are taken from
         :param value:   The value that this constant Series will have
         :param name:    The name that it will be known by (only for representation)
+        :param dtype:   Optional dtype for structural types. Will default to cls.dtype
         """
-        expression = ConstValueExpression(cls.value_to_expression(dialect=base.engine.dialect, value=value))
+        if dtype is None:
+            dtype = cls.dtype
+        expression = cls.value_to_expression(dialect=base.engine.dialect, value=value, dtype=dtype)
         result = cls.get_class_instance(
             engine=base.engine,
             base_node=base.base_node,
@@ -383,8 +456,19 @@ class Series(ABC):
             group_by=None,
             sorted_ascending=None,
             index_sorting=[],
+            instance_dtype=dtype
         )
         return result
+
+    @classmethod
+    def assert_engine_dialect_supported(cls, dialect_engine: Union[Dialect, Engine]):
+        if isinstance(dialect_engine, Engine):
+            db_dialect = DBDialect.from_engine(dialect_engine)
+        else:
+            db_dialect = DBDialect.from_dialect(dialect_engine)
+        if db_dialect not in cls.supported_db_dtype:
+            message_override = f'{cls.__name__} is not supported for database dialect {dialect_engine.name}'
+            raise DatabaseNotSupportedException(dialect_engine, message_override=message_override)
 
     def copy(self):
         """
@@ -412,7 +496,8 @@ class Series(ABC):
         group_by: Optional[Union['GroupBy', NotSet]] = not_set,
         sorted_ascending: Optional[Union[bool, NotSet]] = not_set,
         index_sorting: Optional[List[bool]] = None,
-        **kwargs,
+        instance_dtype: Optional[StructuredDtype] = None,
+        **kwargs
     ) -> T:
         """
         INTERNAL: Copy this instance into a new one, with the given overrides
@@ -432,21 +517,34 @@ class Series(ABC):
             group_by=self._group_by if group_by is not_set else group_by,
             sorted_ascending=self._sorted_ascending if sorted_ascending is not_set else sorted_ascending,
             index_sorting=self._index_sorting if index_sorting is None else index_sorting,
-            **kwargs,
+            instance_dtype=self.instance_dtype if instance_dtype is None else instance_dtype,
+            **kwargs
         )
 
-    def copy_override_dtype(self, dtype: Optional[str]) -> 'Series':
+    def copy_override_dtype(
+        self,
+        dtype: Optional[str],
+        *,
+        instance_dtype: Optional[StructuredDtype] = None
+    ) -> 'Series':
         """
         INTERNAL: create an instance of the Series subtype with the given dtype, and copy
         all values from self into that instance.
         """
         klass: Type['Series'] = get_series_type_from_dtype(self.dtype if dtype is None else dtype)
-        return self.copy_override_type(klass)
+        return self.copy_override_type(klass, instance_dtype=instance_dtype)
 
-    def copy_override_type(self, series_type: Type[T], **kwargs) -> T:
+    def copy_override_type(
+        self,
+        series_type: Type[T],
+        *,
+        instance_dtype: Optional[StructuredDtype] = None,
+        **kwargs
+    ) -> T:
         """
         INTERNAL: create an instance of the given Series subtype, copy all values from self.
         """
+        instance_dtype = series_type.dtype if instance_dtype is None else instance_dtype
         return series_type(
             engine=self._engine,
             base_node=self._base_node,
@@ -456,6 +554,7 @@ class Series(ABC):
             group_by=self._group_by,
             sorted_ascending=self._sorted_ascending,
             index_sorting=self._index_sorting,
+            instance_dtype=instance_dtype,
             **kwargs,
         )
 
@@ -673,10 +772,32 @@ class Series(ABC):
         """
         return self.to_pandas().to_numpy()
 
+    def reset_index(
+        self,
+        level: Optional[Union[str, Sequence[str]]] = None,
+        drop: bool = False,
+    ) -> DataFrameOrSeries:
+        """
+        Drops the current index.
+
+        :param level: Removes given levels from index. Removes all levels by default
+        :param drop: if False, the dropped index is added to the data columns of the DataFrame. If True it
+            is removed.
+        :returns: Series or DataFrame with the index dropped.
+        """
+
+        result = self.to_frame().reset_index(level, drop)
+
+        if drop:
+            return result.all_series[self.name]
+
+        return result
+
     def sort_values(self, *, ascending=True):
         """
         Sort this Series by its values.
         Returns a new instance and does not actually modify the instance it is called on.
+
         :param ascending: Whether to sort ascending (True) or descending (False)
         """
         if self._sorted_ascending is not None and self._sorted_ascending == ascending:
@@ -844,7 +965,8 @@ class Series(ABC):
                 # avoid loops here.
                 (recursion == 'GroupBy' or self.group_by == other.group_by) and
                 self.sorted_ascending == other.sorted_ascending and
-                self.index_sorting == other.index_sorting
+                self.index_sorting == other.index_sorting and
+                self.instance_dtype == other.instance_dtype
         )
 
     def __getitem__(self, key: Union[Any, slice]):
@@ -1344,11 +1466,11 @@ class Series(ABC):
         :param skipna: only ``skipna=True`` supported. This means NULL values are ignored.
         :returns: a new Series with the aggregation applied
 
-        ..warning::
+        .. warning::
             The result of this function might be non-deterministic if there are multiple values with
             the same frequency.
 
-        ..note::
+        .. note::
             BigQuery has no support for aggregation function ``MODE``, therefore ``APPROX_TOP_COUNT``
             approximate aggregate function is used instead. Which means that an approximate result will
             be produced instead of exact results.
@@ -1488,7 +1610,7 @@ class Series(ABC):
         from bach.partitioning import WindowFunction
         # TODO Lag, lead etc. could check whether the window is setup correctly to include that value
         window = self._check_window(WindowFunction.LAG, window)
-        default_expr = self.value_to_expression(dialect=self.engine.dialect, value=default)
+        default_expr = self.value_to_expression(dialect=self.engine.dialect, value=default, dtype=self.dtype)
         return self._derived_agg_func(
             window,
             Expression.construct(f'lag({{}}, {offset}, {{}})', self, default_expr),
@@ -1507,7 +1629,7 @@ class Series(ABC):
         """
         from bach.partitioning import WindowFunction
         window = self._check_window(WindowFunction.LEAD, window)
-        default_expr = self.value_to_expression(dialect=self.engine.dialect, value=default)
+        default_expr = self.value_to_expression(dialect=self.engine.dialect, value=default, dtype=self.dtype)
         return self._derived_agg_func(
             window,
             Expression.construct(f'lead({{}}, {offset}, {{}})', self, default_expr),
@@ -1692,7 +1814,7 @@ def value_to_series(base: DataFrameOrSeries,
     with the constant value.
     :param base: Base series or DataFrame. In case a new Series object is created and returned, it will
         share its engine, index, and base_node with this one. Only applies if value is not a Series
-    :param value: constant value for which to create a Series, or a Series
+    :param value: value for which to create a Series, or a Series
     :param name: optional name for the series object. Only applies if value is not a Series
     :return:
     """
@@ -1734,5 +1856,6 @@ def variable_series(
         group_by=None,
         sorted_ascending=None,
         index_sorting=[],
+        instance_dtype=series_type.dtype  # TODO: make work for structural types too
     )
     return result

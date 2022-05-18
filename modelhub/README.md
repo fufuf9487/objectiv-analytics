@@ -16,7 +16,7 @@ made (see below). All other instructions live in the README.md in the link above
 
 ### Your own code
 To use the model hub in your own code, you can import the package and use it to get a Bach DataFrame 
-([What is Bach?](https://www.objectiv.io/docs/modeling/bach_whatisbach)) to 
+([What is Bach?](https://www.objectiv.io/docs/modeling/bach/what-is-bach/)) to 
 perform your operations on. The object can be instantiated as follows, where the `db_url` and `table_name`
 should be adjusted depending on where the data is stored and how to access it.
 ```python

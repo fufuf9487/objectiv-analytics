@@ -7,6 +7,7 @@ from sqlalchemy.engine import Dialect
 
 from bach.series import Series
 from bach.expression import Expression
+from bach.types import StructuredDtype
 from sql_models.constants import DBDialect
 
 if TYPE_CHECKING:
@@ -125,7 +126,12 @@ class SeriesString(Series):
         return literal
 
     @classmethod
-    def supported_value_to_literal(cls, dialect: Dialect, value: str) -> Expression:
+    def supported_value_to_literal(
+        cls,
+        dialect: Dialect,
+        value: str,
+        dtype: StructuredDtype
+    ) -> Expression:
         return Expression.string_value(value)
 
     @classmethod
