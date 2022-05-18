@@ -1,10 +1,14 @@
 """
 Copyright 2021 Objectiv B.V.
 """
-from typing import List, Union
+import re
+from typing import List, Union, Optional
 from typing import TYPE_CHECKING
 
 import bach
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
+
 from modelhub.aggregate import Aggregate
 from modelhub.map import Map
 from modelhub.series.series_objectiv import MetaBase
@@ -89,11 +93,30 @@ class ModelHub():
             raise ValueError(f"not right columns in DataFrame {data.dtypes.items()}"
                              f"should be {required_columns.items()}")
 
-    def get_objectiv_dataframe(self,
-                               db_url: str = None,
-                               table_name: str = 'data',
-                               start_date: str = None,
-                               end_date: str = None):
+    @staticmethod
+    def _get_db_engine(db_url: Optional[str], bq_credentials_path: Optional[str] = None) -> Engine:
+        if re.match(r'^bigquery://.+', db_url):
+            if not bq_credentials_path:
+                raise ValueError('BigQuery credentials path is required for engine creation.')
+
+            return create_engine(db_url, credentials_path=bq_credentials_path)
+
+        import os
+        db_url = db_url or os.environ.get('DSN', 'postgresql://objectiv:@localhost:5432/objectiv')
+        return create_engine(db_url)
+
+
+    def get_objectiv_dataframe(
+        self,
+        db_url: str,
+        table_name: str = 'data',
+        start_date: str = None,
+        end_date: str = None,
+        *,
+        bq_credentials_path: Optional[str] = None,
+        bq_dataset: Optional[str] = None,
+        bq_project_id: Optional[str] = None,
+    ):
         """
         Sets data from sql table into an :py:class:`bach.DataFrame` object.
 
@@ -111,27 +134,13 @@ class ModelHub():
             and including the last date in the sql table. Format as 'YYYY-MM-DD'.
         :returns: :py:class:`bach.DataFrame` with Objectiv data.
         """
-        import sqlalchemy
-        if db_url is None:
-            import os
-            db_url = os.environ.get('DSN', 'postgresql://objectiv:@localhost:5432/objectiv')
-        engine = sqlalchemy.create_engine(db_url, pool_size=1, max_overflow=0)
-
-        sql = f"""
-            select column_name, data_type
-            from information_schema.columns
-            where table_name = '{table_name}'
-            order by ordinal_position
-        """
-
-        with engine.connect() as conn:
-            res = conn.execute(sql)
-        db_dialect = DBDialect.from_engine(engine)
-        dtypes = {
-            x[0]: bach.types.get_dtype_from_db_dtype(db_dialect=db_dialect, db_dtype=x[1])
-            for x in res.fetchall()
-        }
-
+        engine = self._get_db_engine(db_url=db_url, bq_credentials_path=bq_credentials_path)
+        dtypes = bach.from_database.get_dtypes_from_table(
+            engine=engine,
+            table_name=table_name,
+            bq_dataset=bq_dataset,
+            bq_project_id=bq_project_id,
+        )
         expected_columns = {'event_id': 'uuid',
                             'day': 'date',
                             'moment': 'timestamp',
