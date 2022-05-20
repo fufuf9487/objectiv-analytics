@@ -24,6 +24,8 @@ def test_get_objectiv_dataframe() -> None:
         db_url='bigquery://objectiv-snowplow-test-2/snowplow',
         table_name='events',
         bq_credentials_path=DB_BQ_CREDENTIALS_PATH,
+        start_date='2022-05-16',
+        end_date='2022-05-20',
     )
 
 

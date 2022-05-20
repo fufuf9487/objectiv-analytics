@@ -1,70 +1,81 @@
-"""
-Copyright 2021 Objectiv B.V.
-"""
-from typing import Optional
+import bach
 
+from enum import Enum
+from typing import Tuple, Dict, Any, List
+
+from sql_models.util import is_bigquery
 from sqlalchemy.engine import Engine
 
-from modelhub.stack.basic_features import BasicFeatures
-from modelhub.stack.extracted_contexts import ExtractedContexts
-from modelhub.stack.sessionized_data import SessionizedData
 
-from sql_models.model import SqlModel
+class ObjectivSupportedColumns(Enum):
+    EVENT_ID = 'event_id'
+    DAY = 'day'
+    MOMENT = 'moment'
+    USER_ID = 'user_id'
+    GLOBAL_CONTEXTS = 'global_contexts'
+    LOCATION_STACK = 'location_stack'
+    EVENT_TYPE = 'event_type'
+    STACK_EVENT_TYPES = 'stack_event_type'
+    SESSION_ID = 'session_id'
+    SESSION_HIT_NUMBER = 'session_hit_number'
 
-
-def _get_date_range(start_date, end_date):
-    if start_date:
-        if end_date:
-            date_range = f"where day between '{start_date}' and '{end_date}'"
-        else:
-            date_range = f"where day >= '{start_date}'"
-    else:
-        if end_date:
-            date_range = f"where day <= '{end_date}'"
-        else:
-            date_range = ''
-
-    return date_range
-
-
-def basic_feature_model(session_gap_seconds=1800,
-                        start_date=None,
-                        end_date=None,
-                        table_name='data') -> SqlModel:
-    """ Give a linked BasicFeatures model"""
-    date_range = _get_date_range(start_date, end_date)
-
-    extracted_contexts = ExtractedContexts(date_range=date_range, table_name=table_name)
-    return \
-        BasicFeatures.build(
-        sessionized_data=SessionizedData(
-            session_gap_seconds=session_gap_seconds,
-            extracted_contexts=extracted_contexts
-        )
+    _DATA_SERIES = (
+        DAY, MOMENT, USER_ID, GLOBAL_CONTEXTS, LOCATION_STACK, EVENT_TYPE,
+        STACK_EVENT_TYPES, SESSION_ID, SESSION_HIT_NUMBER,
     )
 
+    _INDEX_SERIES = (EVENT_ID, )
 
-def sessionized_data_model(
-    engine: Engine,
-    session_gap_seconds=1800,
-    start_date=None,
-    end_date=None,
-    table_name='data',
-    *,
-    bq_dataset: Optional[str] = None,
-    bq_project_id: Optional[str] = None,
-) -> SqlModel:
-    """ Give a linked SessionizedData model"""
-    date_range = _get_date_range(start_date, end_date)
-
-    extracted_contexts = ExtractedContexts(
-        engine=engine,
-        date_range=date_range,
-        table_name=table_name,
-        bq_dataset=bq_dataset,
-        bq_project_id=bq_project_id,
+    _EXTRACTED_CONTEXT_COLUMNS = (
+        EVENT_ID, DAY, MOMENT, USER_ID, GLOBAL_CONTEXTS, LOCATION_STACK, EVENT_TYPE, STACK_EVENT_TYPES,
     )
-    return SessionizedData.build(
-            session_gap_seconds=session_gap_seconds,
-            extracted_contexts=extracted_contexts
-        )
+
+    _SESSIONIZED_COLUMNS = (
+        SESSION_ID, SESSION_HIT_NUMBER,
+    )
+
+    @classmethod
+    def get_extracted_context_columns(cls) -> Tuple['ObjectivSupportedColumns', ...]:
+        return cls._EXTRACTED_CONTEXT_COLUMNS.value
+
+    @classmethod
+    def get_sessionized_columns(cls) -> Tuple['ObjectivSupportedColumns', ...]:
+        return cls._SESSIONIZED_COLUMNS.value
+
+# mapping for series names and dtypes
+_OBJECTIV_SUPPORTED_COLUMNS_X_DTYPES = {
+    ObjectivSupportedColumns.EVENT_ID: bach.SeriesUuid.dtype,
+    ObjectivSupportedColumns.DAY: bach.SeriesDate.dtype,
+    ObjectivSupportedColumns.MOMENT: bach.SeriesTimestamp.dtype,
+    ObjectivSupportedColumns.USER_ID: bach.SeriesUuid.dtype,
+    ObjectivSupportedColumns.GLOBAL_CONTEXTS: bach.SeriesJsonb.dtype,
+    ObjectivSupportedColumns.LOCATION_STACK: bach.SeriesJsonb.dtype,
+    ObjectivSupportedColumns.EVENT_TYPE: bach.SeriesString.dtype,
+    ObjectivSupportedColumns.STACK_EVENT_TYPES: bach.SeriesJsonb.dtype,
+    ObjectivSupportedColumns.SESSION_ID: bach.SeriesInt64.dtype,
+    ObjectivSupportedColumns.SESSION_HIT_NUMBER: bach.SeriesInt64.dtype,
+}
+
+
+def get_supported_dtypes_per_objectiv_column(engine: Engine) -> Dict[ObjectivSupportedColumns, Any]:
+    dtypes = _OBJECTIV_SUPPORTED_COLUMNS_X_DTYPES.copy()
+    if is_bigquery(engine):
+        dtypes[ObjectivSupportedColumns.GLOBAL_CONTEXTS] = [bach.SeriesDict.dtype]
+        dtypes[ObjectivSupportedColumns.LOCATION_STACK] = [bach.SeriesDict.dtype]
+        dtypes[ObjectivSupportedColumns.STACK_EVENT_TYPES] = [bach.SeriesString.dtype]
+
+    return {col.value: dtype for col, dtype in dtypes.items()}
+
+
+def check_objectiv_series_dtypes(
+    df: bach.DataFrame, columns_to_check: List[ObjectivSupportedColumns],
+) -> None:
+    objectiv_dtypes = get_supported_dtypes_per_objectiv_column(df.engine)
+    for col in columns_to_check:
+        supported_col = ObjectivSupportedColumns(col) if isinstance(col, str) else col
+        if supported_col.value not in df.data_columns:
+            raise ValueError(f'{supported_col.value} is not present in DataFrame.')
+
+        dtype = objectiv_dtypes[supported_col.value]
+        if df[supported_col.value].instance_dtype != dtype:
+            raise ValueError(f'{supported_col.value} must be {dtype} dtype.')

@@ -10,11 +10,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
 from modelhub.aggregate import Aggregate
-from modelhub.constants import ObjectiveSupportedColumnsDtypes
 from modelhub.map import Map
 from modelhub.series.series_objectiv import MetaBase
-from sql_models.constants import NotSet, DBDialect
-from modelhub.stack.util import sessionized_data_model
+from sql_models.constants import NotSet
 
 if TYPE_CHECKING:
     from modelhub.series import SeriesLocationStack
@@ -25,7 +23,7 @@ GroupByType = Union[List[Union[str, bach.Series]], str, bach.Series, NotSet]
 TIME_DEFAULT_FORMAT = 'YYYY-MM-DD HH24:MI:SS.MS'
 
 
-class ModelHub():
+class ModelHub:
     """
     The model hub contains collection of data models and convenience functions that you can take, combine and
     run on Bach data frames to quickly build highly specific model stacks for product analysis and
@@ -74,26 +72,6 @@ class ModelHub():
         """
         return self._conversion_events
 
-    def _check_data_is_objectiv_data(self, data):
-        if data.index_dtypes != {'event_id': 'uuid'}:
-            raise ValueError(f"not right index {data.index_dtypes}")
-
-        required_columns = {
-            'day': 'date',
-            'moment': 'timestamp',
-            'user_id': 'uuid',
-            'global_contexts': 'objectiv_global_context',
-            'location_stack': 'objectiv_location_stack',
-            'event_type': 'string',
-            'stack_event_types': 'jsonb',
-            'session_id': 'int64',
-            'session_hit_number': 'int64'
-        }
-
-        if not (required_columns.items() <= data.dtypes.items()):
-            raise ValueError(f"not right columns in DataFrame {data.dtypes.items()}"
-                             f"should be {required_columns.items()}")
-
     @staticmethod
     def _get_db_engine(db_url: Optional[str], bq_credentials_path: Optional[str] = None) -> Engine:
         if re.match(r'^bigquery://.+', db_url):
@@ -134,67 +112,17 @@ class ModelHub():
         :returns: :py:class:`bach.DataFrame` with Objectiv data.
         """
         engine = self._get_db_engine(db_url=db_url, bq_credentials_path=bq_credentials_path)
-        dtypes = bach.from_database.get_dtypes_from_table(
-            engine=engine,
-            table_name=table_name,
-        )
+        from modelhub.stack import get_sessionized_data
 
-        expected_columns = ObjectiveSupportedColumnsDtypes.get_expected_columns_by_engine(engine)
-
-        missing_columns = [
-            col.name.lower() for col in expected_columns if col.name.lower() not in dtypes
-        ]
-        if missing_columns:
-            raise KeyError(
-                f'Expected columns: {",".join(missing_columns)} not in table {table_name}.'
-            )
-
-        context_df = bach.DataFrame.from_table(
-            engine=engine,
-            table_name=table_name,
-            all_dtypes={col.name.lower(): col.value for col in expected_columns},
-            index=[]
-        )
-        model = sessionized_data_model(
+        data = get_sessionized_data(
             engine=engine,
             start_date=start_date,
             end_date=end_date,
             table_name=table_name,
         )
-        # The model returned by `sessionized_data_model()` has different columns than the underlying table.
-        # Note that the order of index_dtype and dtypes matters, as we use it below to get the model_columns
-        index_dtype = {'event_id': 'uuid'}
-        dtypes = {
-            'day': 'date',
-            'moment': 'timestamp',
-            'user_id': 'uuid',
-            'global_contexts': 'jsonb',
-            'location_stack': 'jsonb',
-            'event_type': 'string',
-            'stack_event_types': 'jsonb',
-            'session_id': 'int64',
-            'session_hit_number': 'int64'
-        }
-        model_columns = tuple(index_dtype.keys()) + tuple(dtypes.keys())
-        bach_model = bach.sql_model.BachSqlModel.from_sql_model(
-            sql_model=model,
-            column_expressions={c: bach.expression.Expression.column_reference(c) for c in model_columns},
-        )
-
-        from bach.savepoints import Savepoints
-        data = bach.DataFrame.get_instance(engine=engine,
-                                           base_node=bach_model,
-                                           index_dtypes=index_dtype,
-                                           dtypes=dtypes,
-                                           group_by=None,
-                                           order_by=[],
-                                           savepoints=Savepoints(),
-                                           variables={}
-                                           )
 
         data['global_contexts'] = data.global_contexts.astype('objectiv_global_context')
         data['location_stack'] = data.location_stack.astype('objectiv_location_stack')
-
         return data
 
     def add_conversion_event(self,
