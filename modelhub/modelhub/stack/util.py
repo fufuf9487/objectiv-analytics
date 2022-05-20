@@ -1,6 +1,10 @@
 """
 Copyright 2021 Objectiv B.V.
 """
+from typing import Optional
+
+from sqlalchemy.engine import Engine
+
 from modelhub.stack.basic_features import BasicFeatures
 from modelhub.stack.extracted_contexts import ExtractedContexts
 from modelhub.stack.sessionized_data import SessionizedData
@@ -31,7 +35,8 @@ def basic_feature_model(session_gap_seconds=1800,
     date_range = _get_date_range(start_date, end_date)
 
     extracted_contexts = ExtractedContexts(date_range=date_range, table_name=table_name)
-    return BasicFeatures.build(
+    return \
+        BasicFeatures.build(
         sessionized_data=SessionizedData(
             session_gap_seconds=session_gap_seconds,
             extracted_contexts=extracted_contexts
@@ -39,14 +44,26 @@ def basic_feature_model(session_gap_seconds=1800,
     )
 
 
-def sessionized_data_model(session_gap_seconds=1800,
-                           start_date=None,
-                           end_date=None,
-                           table_name='data') -> SqlModel:
+def sessionized_data_model(
+    engine: Engine,
+    session_gap_seconds=1800,
+    start_date=None,
+    end_date=None,
+    table_name='data',
+    *,
+    bq_dataset: Optional[str] = None,
+    bq_project_id: Optional[str] = None,
+) -> SqlModel:
     """ Give a linked SessionizedData model"""
     date_range = _get_date_range(start_date, end_date)
 
-    extracted_contexts = ExtractedContexts(date_range=date_range, table_name=table_name)
+    extracted_contexts = ExtractedContexts(
+        engine=engine,
+        date_range=date_range,
+        table_name=table_name,
+        bq_dataset=bq_dataset,
+        bq_project_id=bq_project_id,
+    )
     return SessionizedData.build(
             session_gap_seconds=session_gap_seconds,
             extracted_contexts=extracted_contexts

@@ -559,7 +559,7 @@ class DataFrame:
         """
         if bq_project_id and not bq_dataset:
             raise ValueError('Cannot specify bq_project_id without setting bq_dataset.')
-        if bq_dataset and not is_bigquery(engine):
+        if bq_dataset and not is_bigquery(Fengine):
             raise ValueError('bq_dataset is a BigQuery-only option.')
 
         if all_dtypes is not None:

@@ -3,14 +3,28 @@ Copyright 2021 Objectiv B.V.
 """
 
 # Any import from from modelhub initializes all the types, do not remove
-from modelhub import __version__
+import os
+
+from modelhub import __version__, ModelHub
 from tests_modelhub.functional.modelhub.data_and_utils import get_objectiv_dataframe_test
 from tests.functional.bach.test_data_and_utils import assert_equals_data
 from uuid import UUID
 
+DB_BQ_CREDENTIALS_PATH = (
+    '/home/kathia/Desktop/objectiv/objectiv-analytics/modelhub/.secrets/bach-big-query-testing.json'
+)
+
 
 def test_get_objectiv_stack():
     get_objectiv_dataframe_test()
+
+
+def test_get_objectiv_dataframe() -> None:
+    ModelHub().get_objectiv_dataframe(
+        db_url='bigquery://objectiv-snowplow-test-2/snowplow',
+        table_name='events',
+        bq_credentials_path=DB_BQ_CREDENTIALS_PATH,
+    )
 
 
 # map

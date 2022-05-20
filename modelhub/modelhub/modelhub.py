@@ -10,6 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
 from modelhub.aggregate import Aggregate
+from modelhub.constants import ObjectiveSupportedColumnsDtypes
 from modelhub.map import Map
 from modelhub.series.series_objectiv import MetaBase
 from sql_models.constants import NotSet, DBDialect
@@ -105,17 +106,14 @@ class ModelHub():
         db_url = db_url or os.environ.get('DSN', 'postgresql://objectiv:@localhost:5432/objectiv')
         return create_engine(db_url)
 
-
     def get_objectiv_dataframe(
         self,
         db_url: str,
-        table_name: str = 'data',
+        table_name: str,
         start_date: str = None,
         end_date: str = None,
         *,
         bq_credentials_path: Optional[str] = None,
-        bq_dataset: Optional[str] = None,
-        bq_project_id: Optional[str] = None,
     ):
         """
         Sets data from sql table into an :py:class:`bach.DataFrame` object.
@@ -132,26 +130,37 @@ class ModelHub():
             the first date in the sql table. Format as 'YYYY-MM-DD'.
         :param end_date: last date for which data is loaded to the DataFrame. If None, data is loaded up to
             and including the last date in the sql table. Format as 'YYYY-MM-DD'.
+
         :returns: :py:class:`bach.DataFrame` with Objectiv data.
         """
         engine = self._get_db_engine(db_url=db_url, bq_credentials_path=bq_credentials_path)
         dtypes = bach.from_database.get_dtypes_from_table(
             engine=engine,
             table_name=table_name,
-            bq_dataset=bq_dataset,
-            bq_project_id=bq_project_id,
         )
-        expected_columns = {'event_id': 'uuid',
-                            'day': 'date',
-                            'moment': 'timestamp',
-                            'cookie_id': 'uuid',
-                            'value': 'json'}
-        if dtypes != expected_columns:
-            raise KeyError(f'Expected columns not in table {table_name}. Found: {dtypes}')
 
-        model = sessionized_data_model(start_date=start_date,
-                                       end_date=end_date,
-                                       table_name=table_name)
+        expected_columns = ObjectiveSupportedColumnsDtypes.get_expected_columns_by_engine(engine)
+
+        missing_columns = [
+            col.name.lower() for col in expected_columns if col.name.lower() not in dtypes
+        ]
+        if missing_columns:
+            raise KeyError(
+                f'Expected columns: {",".join(missing_columns)} not in table {table_name}.'
+            )
+
+        context_df = bach.DataFrame.from_table(
+            engine=engine,
+            table_name=table_name,
+            all_dtypes={col.name.lower(): col.value for col in expected_columns},
+            index=[]
+        )
+        model = sessionized_data_model(
+            engine=engine,
+            start_date=start_date,
+            end_date=end_date,
+            table_name=table_name,
+        )
         # The model returned by `sessionized_data_model()` has different columns than the underlying table.
         # Note that the order of index_dtype and dtypes matters, as we use it below to get the model_columns
         index_dtype = {'event_id': 'uuid'}
