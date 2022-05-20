@@ -361,11 +361,12 @@ class Series(ABC):
     def get_db_dtype(cls, dialect: Dialect) -> Optional[str]:
         """
         Give the static db_dtype of this Series, for the given database dialect.
+
         :raises DatabaseNotSupportedException: If the Series subclass doesn't support the database dialect.
         :return: database type as string, or None if this Series has no database type for which it is the
             standard Series for that database, or if that type is a structural type whose exact type depends
             on the data of the subtypes (e.g. SeriesList will return None on BigQuery, as it can handle all
-                ARRAY<*> subtypes)
+            ARRAY<*> subtypes)
         """
         db_dialect = DBDialect.from_dialect(dialect)
         if db_dialect not in cls.supported_db_dtype:
@@ -462,6 +463,10 @@ class Series(ABC):
 
     @classmethod
     def assert_engine_dialect_supported(cls, dialect_engine: Union[Dialect, Engine]):
+        """
+        INTERNAL: check that the given dialect/engine is in cls.supported_db_dtype.
+        :raises DatabaseNotSupportedException: if dialect/engine is not supported.
+        """
         if isinstance(dialect_engine, Engine):
             db_dialect = DBDialect.from_engine(dialect_engine)
         else:
