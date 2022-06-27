@@ -17,6 +17,7 @@ class _CalculatedConversionSeries(str, Enum):
     CONVERSIONS_IN_TIME = 'conversions_in_time'
     CONVERSIONS_COUNTER = 'converted'
     PRE_CONVERSION_HIT_NUMBER = 'pre_conversion_hit_number'
+    HIT_BEFORE_CONVERSION = 'hit_before_conversion'
 
     @property
     def private_name(self) -> str:
@@ -38,6 +39,11 @@ _DEPENDENCIES_PER_CONVERSION_SERIES: Dict[_CalculatedConversionSeries, List[_Cal
     _CalculatedConversionSeries.PRE_CONVERSION_HIT_NUMBER: [
         _CalculatedConversionSeries.IS_CONVERSION_EVENT,
         _CalculatedConversionSeries.CONVERSIONS_IN_TIME,
+    ],
+    _CalculatedConversionSeries.HIT_BEFORE_CONVERSION: [
+        _CalculatedConversionSeries.IS_CONVERSION_EVENT,
+        _CalculatedConversionSeries.CONVERSIONS_IN_TIME,
+        _CalculatedConversionSeries.CONVERSIONS_COUNTER,
     ]
 }
 
@@ -228,6 +234,27 @@ class Map:
             copy_override_type(bach.SeriesInt64)
         )
 
+    def hit_before_conversion(
+        self,
+        data: bach.DataFrame,
+        name: str,
+        partition: str = 'session_id',
+    ) -> bach.SeriesBoolean:
+        series_to_calculate = _CalculatedConversionSeries.HIT_BEFORE_CONVERSION
+        conversion_df = self._get_calculated_conversion_df(
+            series_to_calculate=series_to_calculate,
+            data=data,
+            name=name,
+            partition=partition,
+        )
+
+        series = conversion_df[series_to_calculate.private_name]
+
+        return (
+            series.copy_override(name=series_to_calculate.public_name).
+            copy_override_type(bach.SeriesBoolean)
+        )
+
     @staticmethod
     def _check_conversion_dependencies(
         data: bach.DataFrame, series_to_calculate: _CalculatedConversionSeries
@@ -279,6 +306,9 @@ class Map:
 
         if _CalculatedConversionSeries.PRE_CONVERSION_HIT_NUMBER in variables_to_calc:
             data = self._calculate_pre_conversion_hit_number(data, **kwargs)
+
+        if _CalculatedConversionSeries.HIT_BEFORE_CONVERSION in variables_to_calc:
+            data = self._calculate_hit_before_conversion(data, **kwargs)
 
         calculated_series = [var.private_name for var in variables_to_calc]
         return data[calculated_series]
@@ -379,3 +409,15 @@ class Map:
 
         # pre_conversion_hit_number requires materialization due to window
         return data.materialize(node_name=f'{series_to_calculate}_calculation')
+
+    def _calculate_hit_before_conversion(self, data: bach.DataFrame, **kwargs) -> bach.DataFrame:
+
+        """ For documentation, see function :meth:`Map.hit_before_conversion()` """
+
+        series_to_calculate = _CalculatedConversionSeries.HIT_BEFORE_CONVERSION
+        self._check_conversion_dependencies(data, series_to_calculate)
+
+        cit_series_name = _CalculatedConversionSeries.CONVERSIONS_IN_TIME.private_name
+        cc_series_name = _CalculatedConversionSeries.CONVERSIONS_COUNTER.private_name
+        data[series_to_calculate.private_name] = (data[cit_series_name] == 0) & (data[cc_series_name] >= 1)
+        return data
