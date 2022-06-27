@@ -26,9 +26,20 @@ First we look at the data.
 
     df.sort_values('session_id', ascending=False).head()
 
+.. code-block::
+
+    event_id                               day          moment	               user_id	                                global_contexts	                                    location_stack	                                 event_type	               stack_event_types	                                      session_id	session_hit_number
+
+    9be40988-acee-4b03-95fd-df7f63c264bd	2022-06-27	2022-06-27 16:43:54.518	de3ac5fd-9eea-45c6-8408-8757e5393b4f	[{'id': 'http_context', '_type': 'HttpContext'...	[{'id': 'home', '_type': 'RootLocationContext'...	PressEvent	  [AbstractEvent, InteractiveEvent, PressEvent]	       5603	3
+    30e64a23-fb00-483d-bab1-e197e6098658	2022-06-27	2022-06-27 16:44:16.618	de3ac5fd-9eea-45c6-8408-8757e5393b4f	[{'id': 'http_context', '_type': 'HttpContext'...	[{'id': 'home', '_type': 'RootLocationContext'...	VisibleEvent  [AbstractEvent, NonInteractiveEvent, VisibleEv...	   5603	4
+    10a4a382-2c29-44f2-86b3-b47f3f1845f5	2022-06-27	2022-06-27 16:43:40.024	de3ac5fd-9eea-45c6-8408-8757e5393b4f	[{'id': 'http_context', '_type': 'HttpContext'...	[{'id': 'home', '_type': 'RootLocationContext'...	PressEvent	  [AbstractEvent, InteractiveEvent, PressEvent]	       5603	1
+    9b851eea-fbba-4faf-a494-dba90b3dd3b9	2022-06-27	2022-06-27 16:43:40.786	de3ac5fd-9eea-45c6-8408-8757e5393b4f	[{'id': 'http_context', '_type': 'HttpContext'...	[{'id': 'home', '_type': 'RootLocationContext'...	PressEvent	  [AbstractEvent, InteractiveEvent, PressEvent]	       5603	2
+    c9e85649-5473-40d9-9c37-481540e431c5	2022-06-27	2022-06-27 16:36:39.664	b4b5ce02-7215-4193-9417-2df2faae4b03	[{'id': 'http_context', '_type': 'HttpContext'...	[{'id': 'modeling', '_type': 'RootLocationCont...	VisibleEvent	[AbstractEvent, NonInteractiveEvent, VisibleEv...	   5602	4
+
+
 The columns 'global_contexts' and the 'location_stack' contain most of the event specific data. These columns
 are json type columns and we can extract data from it based on the keys of the json objects using
-:doc:`get_from_context_with_type_series <../open-model-hub/api-reference/SeriesGlobalContexts/modelhub.SeriesGlobalContexts.objectiv>`. 
+:doc:`get_from_context_with_type_series <../open-model-hub/api-reference/SeriesGlobalContexts/modelhub.SeriesGlobalContexts.objectiv>`.
 Or use methods specific to the :ref:`location_stack` or :ref:`global_contexts` to extract the data.
 
 
@@ -47,7 +58,7 @@ Or use methods specific to the :ref:`location_stack` or :ref:`global_contexts` t
 
 Now we will go though a selection of basic analytics metrics. We can use models from the :ref:`models
 <models>`
-for this purpose or use :ref:`Bach <bach>` to do data analysis directly on the data stored in the SQL database using 
+for this purpose or use :ref:`Bach <bach>` to do data analysis directly on the data stored in the SQL database using
 pandas-like syntax.
 
 For each example, `head()`, `to_pandas()` or `to_numpy()` can be used to execute the generated SQL and get
@@ -130,7 +141,7 @@ created series contains aggregated data, and it is not allowed to aggregate that
 
 Top used product features
 -------------------------
-Let's get the top used features in the product by our users, for that we can call the `top_product_features` function from the model hub. 
+Let's get the top used features in the product by our users, for that we can call the `top_product_features` function from the model hub.
 
 .. code-block:: python
 
