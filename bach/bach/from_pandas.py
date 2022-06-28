@@ -145,6 +145,8 @@ def from_pandas_ephemeral(
         for col_name, dtype in all_dtypes.items():
             db_col_name = quote_identifier(dialect=engine.dialect, name=col_name)
             db_dtype = get_series_type_from_dtype(dtype).get_db_dtype(dialect=engine.dialect)
+            if dtype == 'uuid':
+                db_dtype = 'STRING'
             sql_column_name_types.append(f'{db_col_name} {db_dtype}')
         sql_struct = f'STRUCT<{", ".join(sql_column_name_types)}>'
         sql = f'select * from UNNEST([{sql_struct} \n{all_values_str}\n])\n'
